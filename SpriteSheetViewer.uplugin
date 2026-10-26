@@ -1,0 +1,22 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Vibe Sprite Sheet Viewer",
+	"Description": "Plays sprite sheet textures as animations, straight from the Texture Editor toolbar.",
+	"Category": "Editor",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "SpriteSheetViewer",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}
