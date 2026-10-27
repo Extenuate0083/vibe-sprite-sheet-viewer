@@ -15,24 +15,28 @@ struct FSpriteSheetState
 
 	int32 Frame = 0;
 	bool bPlaying = true;
-	bool bLoop = true;
-	bool bPingPong = false;
-	int32 Direction = 1;
 	double Accumulator = 0.0;
 
 	bool bSheetView = false;
 	bool bShowGrid = true;
 	bool bUseAlpha = true;
-	bool bChecker = true;
+	/** Flat BgColor behind the image instead of the checkerboard. */
+	bool bSolidBg = false;
+	FLinearColor BgColor = FLinearColor(FColor(0x2A, 0x2A, 0x2E));
+
+	/** Display aspect correction, as in Vibe GTV: 0.5 = as stored, 0 = 2x wider, 1 = 2x taller. */
+	float Ratio = 0.5f;
 
 	/** Screen pixels per texture pixel. Ignored while bFit is set. */
 	float Zoom = 1.f;
-	bool bFit = true;
+	bool bFit = false;
 	FVector2D Pan = FVector2D::ZeroVector;
 
 	int32 NumFrames() const { return FMath::Clamp(Grid.Frames, 1, Grid.NumCells()); }
 	FVector2D TextureSize() const;
 	FVector2D FrameSize() const;
+	/** Horizontal and vertical display stretch from Ratio. */
+	FVector2D Stretch() const;
 	/** Frame's top-left corner and size in UV space. */
 	FBox2f FrameUV(int32 InFrame) const;
 
@@ -67,8 +71,13 @@ private:
 	TSharedRef<SWidget> MakeRow(const FText& Label, const TSharedRef<SWidget>& Value);
 	TSharedRef<SWidget> MakeToggle(const FText& Label, const FText& ToolTip, bool FSpriteSheetState::* Flag);
 	TSharedRef<SWidget> MakeIconButton(FName Icon, const FText& ToolTip, TFunction<void()> OnClick);
+	/** Row label that resets its value when clicked, like Vibe GTV's. */
+	TSharedRef<SWidget> MakeResetLabel(const FText& Label, TFunction<void()> OnReset);
 
 	void OnGridEdited();
+	void OpenBackgroundPicker();
+	void LoadBackground();
+	void SaveBackground() const;
 	void ResetGrid();
 	FText GetInfoText() const;
 	void ReturnFocus();

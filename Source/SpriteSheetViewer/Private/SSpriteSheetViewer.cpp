@@ -5,6 +5,7 @@
 #include "Engine/Texture2D.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Rendering/DrawElements.h"
 #include "Rendering/SlateRenderer.h"
 #include "Styling/AppStyle.h"
@@ -17,6 +18,8 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSpacer.h"
+#include "Widgets/Colors/SColorBlock.h"
+#include "Widgets/Colors/SColorPicker.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -56,6 +59,8 @@ namespace
 
 	constexpr float MinZoom = 0.05f;
 	constexpr float MaxZoom = 64.f;
+
+	const TCHAR* ViewConfigSection = TEXT("SpriteSheetViewer");
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -74,6 +79,12 @@ FVector2D FSpriteSheetState::FrameSize() const
 {
 	const FVector2D Size = TextureSize();
 	return FVector2D(Size.X / Grid.Columns, Size.Y / Grid.Rows);
+}
+
+FVector2D FSpriteSheetState::Stretch() const
+{
+	const float R = FMath::Clamp(Ratio, 0.f, 1.f);
+	return FVector2D(FMath::Pow(2.f, FMath::Max((0.5f - R) * 2.f, 0.f)), FMath::Pow(2.f, FMath::Max((R - 0.5f) * 2.f, 0.f)));
 }
 
 FBox2f FSpriteSheetState::FrameUV(int32 InFrame) const
@@ -114,48 +125,8 @@ void FSpriteSheetState::Advance(double DeltaTime)
 
 void FSpriteSheetState::StepPlayback()
 {
-	const int32 N = NumFrames();
-	if (N <= 1)
-	{
-		return;
-	}
-	if (!bPingPong)
-	{
-		Direction = 1;
-	}
-
-	int32 Next = Frame + Direction;
-	if (Next >= N)
-	{
-		if (bPingPong)
-		{
-			Direction = -1;
-			Next = N - 2;
-		}
-		else if (bLoop)
-		{
-			Next = 0;
-		}
-		else
-		{
-			Next = N - 1;
-			bPlaying = false;
-		}
-	}
-	else if (Next < 0)
-	{
-		Direction = 1;
-		if (bLoop)
-		{
-			Next = 1;
-		}
-		else
-		{
-			Next = 0;
-			bPlaying = false;
-		}
-	}
-	Frame = Next;
+	// Playback always loops.
+	Frame = (Frame + 1) % NumFrames();
 }
 
 void FSpriteSheetState::ClampToGrid()
@@ -214,8 +185,8 @@ public:
 		const FVector2f Origin = FVector2f(L.Origin);
 		const FVector2f Size = FVector2f(L.ContentSize * L.Scale);
 
-		// Background behind the image: checkerboard for alpha, or a flat panel colour.
-		if (State->bChecker && State->bUseAlpha)
+		// Background behind the image: checkerboard for alpha, or the chosen flat colour.
+		if (!State->bSolidBg && State->bUseAlpha)
 		{
 			static FSlateBrush Checker = *FAppStyle::GetBrush("Checkerboard");
 			Checker.Tiling = ESlateBrushTileType::Both;
@@ -224,7 +195,7 @@ public:
 		}
 		else
 		{
-			FSlateDrawElement::MakeBox(Out, LayerId + 1, Geometry.ToPaintGeometry(Size, FSlateLayoutTransform(Origin)), SolidBrush(), ESlateDrawEffect::None, Style::BgWidget);
+			FSlateDrawElement::MakeBox(Out, LayerId + 1, Geometry.ToPaintGeometry(Size, FSlateLayoutTransform(Origin)), SolidBrush(), ESlateDrawEffect::None, State->BgColor.CopyWithNewOpacity(1.f));
 		}
 
 		ImageBrush.SetResourceObject(Texture);
@@ -334,7 +305,8 @@ private:
 	FLayout ComputeLayout(const FVector2D& Avail) const
 	{
 		FLayout L;
-		L.ContentSize = State->bSheetView ? State->TextureSize() : State->FrameSize();
+		// Content is measured in displayed texels, i.e. after the ratio stretch.
+		L.ContentSize = (State->bSheetView ? State->TextureSize() : State->FrameSize()) * State->Stretch();
 		if (State->bFit)
 		{
 			const double Margin = 24.0;
@@ -364,7 +336,7 @@ private:
 	{
 		const FLayout L = ComputeLayout(Geometry.GetLocalSize());
 		const FVector2D P = (Local - L.Origin) / L.Scale;
-		const FVector2D Cell = State->FrameSize();
+		const FVector2D Cell = State->FrameSize() * State->Stretch();
 		const int32 Col = FMath::FloorToInt(P.X / Cell.X);
 		const int32 Row = FMath::FloorToInt(P.Y / Cell.Y);
 		if (Col < 0 || Row < 0 || Col >= State->Grid.Columns || Row >= State->Grid.Rows)
@@ -560,6 +532,7 @@ void SSpriteSheetViewer::Construct(const FArguments& InArgs, UTexture2D* InTextu
 	State->Grid = SpriteSheetGrid::Detect(InTexture, State->bGridFromName);
 	bGridSaved = SpriteSheetGrid::Load(InTexture, State->Grid);
 	State->ClampToGrid();
+	LoadBackground();
 
 	const FSimpleDelegate Pause = FSimpleDelegate::CreateLambda([this]() { SetPlaying(false); });
 
@@ -765,6 +738,29 @@ TSharedRef<SWidget> SSpriteSheetViewer::MakeIconButton(FName Icon, const FText& 
 		];
 }
 
+TSharedRef<SWidget> SSpriteSheetViewer::MakeResetLabel(const FText& Label, TFunction<void()> OnReset)
+{
+	TSharedPtr<SButton> Button;
+	SAssignNew(Button, SButton)
+		.ButtonStyle(FAppStyle::Get(), "NoBorder")
+		.IsFocusable(false)
+		.ContentPadding(0.f)
+		.Cursor(EMouseCursor::Hand)
+		.ToolTipText(LOCTEXT("ResetTip", "Click to reset"))
+		.OnClicked_Lambda([OnReset]() { OnReset(); return FReply::Handled(); })
+		[
+			SNew(STextBlock)
+			.Text(Label)
+			.Font(Style::Font(9))
+			.ColorAndOpacity_Lambda([WeakButton = TWeakPtr<SButton>(Button)]()
+			{
+				const TSharedPtr<SButton> Pinned = WeakButton.Pin();
+				return FSlateColor(Pinned && Pinned->IsHovered() ? Style::Accent : Style::Text);
+			})
+		];
+	return SNew(SBox).HAlign(HAlign_Left)[Button.ToSharedRef()];
+}
+
 TSharedRef<SWidget> SSpriteSheetViewer::MakeSidePanel()
 {
 	auto IntBox = [this](int32 FSpriteSheetGrid::* Field, TFunction<int32()> Max) -> TSharedRef<SWidget>
@@ -845,14 +841,6 @@ TSharedRef<SWidget> SSpriteSheetViewer::MakeSidePanel()
 				.OnValueChanged_Lambda([this](float Value) { State->Grid.Fps = Value; OnGridEdited(); })
 				.OnValueCommitted_Lambda([this](float, ETextCommit::Type Commit) { if (Commit == ETextCommit::OnEnter) { ReturnFocus(); } }))
 		]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 2.f)
-		[
-			MakeToggle(LOCTEXT("Loop", "Loop"), LOCTEXT("LoopTip", "Start over after the last frame"), &FSpriteSheetState::bLoop)
-		]
-		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
-		[
-			MakeToggle(LOCTEXT("PingPong", "Ping-pong"), LOCTEXT("PingPongTip", "Play forward, then backward"), &FSpriteSheetState::bPingPong)
-		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
 		[
 			SNew(STextBlock)
@@ -886,9 +874,97 @@ TSharedRef<SWidget> SSpriteSheetViewer::MakeSidePanel()
 		[
 			MakeToggle(LOCTEXT("Alpha", "Alpha"), LOCTEXT("AlphaTip", "Blend with the texture's alpha channel"), &FSpriteSheetState::bUseAlpha)
 		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 2.f)
+		[
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(0.45f).VAlign(VAlign_Center)
+			[
+				MakeResetLabel(LOCTEXT("Ratio", "Ratio"), [this]() { State->Ratio = 0.5f; })
+			]
+			+ SHorizontalBox::Slot().FillWidth(0.55f).VAlign(VAlign_Center)
+			[
+				SNew(SNumericEntryBox<float>)
+				.AllowSpin(true)
+				.MinValue(0.f).MaxValue(1.f)
+				.MinSliderValue(0.f).MaxSliderValue(1.f)
+				.Delta(0.01f)
+				.MinFractionalDigits(2).MaxFractionalDigits(2)
+				.ToolTipText(LOCTEXT("RatioTip", "0.5 = as stored  ·  0 = 2x wider  ·  1 = 2x taller"))
+				.Value_Lambda([this]() { return TOptional<float>(State->Ratio); })
+				.OnValueChanged_Lambda([this](float Value) { State->Ratio = FMath::Clamp(Value, 0.f, 1.f); })
+				.OnValueCommitted_Lambda([this](float Value, ETextCommit::Type Commit)
+				{
+					State->Ratio = FMath::Clamp(Value, 0.f, 1.f);
+					if (Commit == ETextCommit::OnEnter)
+					{
+						ReturnFocus();
+					}
+				})
+			]
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 0.f, 0.f, 2.f).HAlign(HAlign_Right)
+		[
+			SNew(STextBlock)
+			.Font(Style::Font(8))
+			.ColorAndOpacity(Style::TextDim)
+			.Text_Lambda([this]()
+			{
+				const FVector2D S = State->Stretch();
+				const FNumberFormattingOptions Digits = FNumberFormattingOptions().SetMinimumFractionalDigits(2).SetMaximumFractionalDigits(2);
+				if (S.X > 1.001)
+				{
+					return FText::Format(LOCTEXT("StretchWide", "{0}x wide"), FText::AsNumber(S.X, &Digits));
+				}
+				if (S.Y > 1.001)
+				{
+					return FText::Format(LOCTEXT("StretchTall", "{0}x tall"), FText::AsNumber(S.Y, &Digits));
+				}
+				return LOCTEXT("StretchNone", "no stretch");
+			})
+		]
+		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 4.f, 0.f, 2.f)
+		[
+			MakeResetLabel(LOCTEXT("Background", "Background"), [this]()
+			{
+				State->bSolidBg = false;
+				State->BgColor = FSpriteSheetState().BgColor;
+				SaveBackground();
+			})
+		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 2.f)
 		[
-			MakeToggle(LOCTEXT("Checker", "Checkerboard"), LOCTEXT("CheckerTip", "Checkerboard behind transparent pixels"), &FSpriteSheetState::bChecker)
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+			[
+				SNew(SSegmentedControl<bool>)
+				.Value_Lambda([this]() { return State->bSolidBg; })
+				.OnValueChanged_Lambda([this](bool bSolid) { State->bSolidBg = bSolid; SaveBackground(); })
+				+ SSegmentedControl<bool>::Slot(false)
+				.Text(LOCTEXT("BgChecker", "Checker"))
+				.ToolTip(LOCTEXT("BgCheckerTip", "Checkerboard behind transparent pixels"))
+				+ SSegmentedControl<bool>::Slot(true)
+				.Text(LOCTEXT("BgSolid", "Solid"))
+				.ToolTip(LOCTEXT("BgSolidTip", "Flat colour behind transparent pixels"))
+			]
+			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(6.f, 0.f, 0.f, 0.f)
+			[
+				SNew(SColorBlock)
+				.Color_Lambda([this]() { return State->BgColor.CopyWithNewOpacity(1.f); })
+				.ShowBackgroundForAlpha(false)
+				.CornerRadius(FVector4(3.f, 3.f, 3.f, 3.f))
+				.Size(FVector2D(28.0, 18.0))
+				.Cursor(EMouseCursor::Hand)
+				.ToolTipText(LOCTEXT("BgColorTip", "Pick the background colour"))
+				.OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent& Event)
+				{
+					if (Event.GetEffectingButton() != EKeys::LeftMouseButton)
+					{
+						return FReply::Unhandled();
+					}
+					OpenBackgroundPicker();
+					return FReply::Handled();
+				})
+			]
 		]
 		+ SVerticalBox::Slot().AutoHeight().Padding(0.f, 6.f, 0.f, 0.f)
 		[
@@ -974,21 +1050,6 @@ TSharedRef<SWidget> SSpriteSheetViewer::MakeTransport()
 			[
 				MakeIconButton("Animation.Forward_End", LOCTEXT("LastTip", "Last frame (End)"), [this]() { SetPlaying(false); State->SetFrame(State->NumFrames() - 1); })
 			]
-			+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4.f, 0.f, 0.f, 0.f)
-			[
-				SNew(SButton)
-				.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-				.IsFocusable(false)
-				.ToolTipText(LOCTEXT("LoopButtonTip", "Loop"))
-				.ContentPadding(FMargin(5.f, 3.f))
-				.OnClicked_Lambda([this]() { State->bLoop = !State->bLoop; return FReply::Handled(); })
-				[
-					SNew(SImage)
-					.Image_Lambda([this]() { return FAppStyle::GetBrush(State->bLoop ? "Animation.Loop.Enabled" : "Animation.Loop.Disabled"); })
-					.ColorAndOpacity_Lambda([this]() { return FSlateColor(State->bLoop ? Style::Accent : Style::TextDim); })
-					.DesiredSizeOverride(FVector2D(18.0, 18.0))
-				]
-			]
 
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.f)
@@ -1065,12 +1126,56 @@ void SSpriteSheetViewer::ReturnFocus()
 	FSlateApplication::Get().SetKeyboardFocus(SharedThis(this), EFocusCause::SetDirectly);
 }
 
+void SSpriteSheetViewer::OpenBackgroundPicker()
+{
+	// Picking a colour switches to Solid; cancelling puts the previous mode back.
+	const TSharedRef<SSpriteSheetViewer> Self = SharedThis(this);
+	const bool bWasSolid = State->bSolidBg;
+	FColorPickerArgs Args(State->BgColor, FOnLinearColorValueChanged::CreateSPLambda(Self, [this](FLinearColor Color)
+	{
+		State->BgColor = Color.CopyWithNewOpacity(1.f);
+		State->bSolidBg = true;
+	}));
+	Args.bUseAlpha = false;
+	Args.ParentWidget = Self;
+	Args.OnColorPickerCancelled = FOnColorPickerCancelled::CreateSPLambda(Self, [this, bWasSolid](FLinearColor Original)
+	{
+		State->BgColor = Original;
+		State->bSolidBg = bWasSolid;
+		SaveBackground();
+	});
+	Args.OnColorPickerWindowClosed = FOnWindowClosed::CreateSPLambda(Self, [this](const TSharedRef<SWindow>&) { SaveBackground(); });
+	OpenColorPicker(Args);
+}
+
+void SSpriteSheetViewer::LoadBackground()
+{
+	if (!GConfig)
+	{
+		return;
+	}
+	GConfig->GetBool(ViewConfigSection, TEXT("SolidBackground"), State->bSolidBg, GEditorPerProjectIni);
+	FString Color;
+	if (GConfig->GetString(ViewConfigSection, TEXT("BackgroundColor"), Color, GEditorPerProjectIni))
+	{
+		State->BgColor.InitFromString(Color);
+		State->BgColor.A = 1.f;
+	}
+}
+
+void SSpriteSheetViewer::SaveBackground() const
+{
+	if (!GConfig)
+	{
+		return;
+	}
+	GConfig->SetBool(ViewConfigSection, TEXT("SolidBackground"), State->bSolidBg, GEditorPerProjectIni);
+	GConfig->SetString(ViewConfigSection, TEXT("BackgroundColor"), *State->BgColor.ToString(), GEditorPerProjectIni);
+	GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 void SSpriteSheetViewer::SetPlaying(bool bInPlaying)
 {
-	if (bInPlaying && !State->bPlaying && !State->bLoop && !State->bPingPong && State->Frame >= State->NumFrames() - 1)
-	{
-		State->SetFrame(0);
-	}
 	State->bPlaying = bInPlaying;
 	State->Accumulator = 0.0;
 

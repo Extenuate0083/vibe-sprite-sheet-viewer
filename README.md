@@ -7,9 +7,9 @@ An Unreal Engine 5.8 editor plugin that plays sprite sheet textures as animation
 - **Grid detection** from names such as `T_Fire_5x3` or `smoke-8X8` (columns × rows). Texture sizes like `2048x2048` are ignored.
 - **Manual grid:** set Columns, Rows and Frames by hand, for sheets whose last row is partly empty. The values are saved per texture in the editor's per-project user settings.
 - **Animation and Sheet views.** Sheet view shows grid lines and highlights the current cell; click a cell to jump to that frame.
-- **Seek bar** with frame ticks and numbers, plus transport buttons (first, previous, play/pause, next, last), loop, and an editable frame counter.
-- **Playback:** FPS setting, ping-pong mode, and the total duration.
-- **View:** alpha on/off, checkerboard background, Fit, 1:1, scroll to zoom toward the cursor, and drag to pan.
+- **Seek bar** with frame ticks and numbers, plus transport buttons (first, previous, play/pause, next, last), and an editable frame counter.
+- **Playback:** always loops; FPS setting and the total duration.
+- **View:** opens at 1:1. Alpha on/off; a Ratio slider like Vibe GTV's (0.5 = as stored, 0 = 2× wider, 1 = 2× taller); checkerboard or a solid background colour from a colour picker (remembered between sessions); Fit, 1:1, scroll to zoom toward the cursor, and drag to pan. Click the Ratio or Background label to reset it.
 
 | Key | Action |
 |---|---|
@@ -49,5 +49,5 @@ UnrealEditor.exe <Project>.uproject -ExecCmds="Automation RunTests SpriteSheetVi
 ```
 
 - `NameParsing`: grid detection from asset names.
-- `Playback`: frame timing, looping, ping-pong, and stopping at the end.
+- `Playback`: frame timing, looping, and the ratio stretch.
 - `UI`: opens the Texture Editor and the viewer on `/Game/VFX/Greeting_animation_c_5x6` and saves screenshots to `Saved/SpriteSheetViewer/`. It needs that sample asset; pass a different asset path as the test parameter to use another texture.

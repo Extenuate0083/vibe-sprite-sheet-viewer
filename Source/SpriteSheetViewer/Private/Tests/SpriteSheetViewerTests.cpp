@@ -78,21 +78,16 @@ bool FSpriteSheetPlaybackTest::RunTest(const FString& Parameters)
 	TestEqual("Frame 5 column", UV.Min.X, 0.25f);
 	TestEqual("Frame 5 row", UV.Min.Y, 0.5f);
 
-	State.SetFrame(0);
-	State.bPingPong = true;
-	for (int32 i = 0; i < 6; ++i)
-	{
-		State.StepPlayback();
-	}
-	TestEqual("Ping-pong turns around at the end", State.Frame, 4);
-
-	State.bPingPong = false;
-	State.bLoop = false;
-	State.bPlaying = true;
 	State.SetFrame(4);
-	State.Advance(1.0);
-	TestEqual("Stops on the last frame without loop", State.Frame, 5);
-	TestFalse("Stopped playing", State.bPlaying);
+	State.Advance(0.95);
+	TestEqual("Keeps looping", State.Frame, 1);
+	TestTrue("Still playing", State.bPlaying);
+
+	TestEqual("Ratio 0.5 doesn't stretch", State.Stretch(), FVector2D(1.0, 1.0));
+	State.Ratio = 0.f;
+	TestEqual("Ratio 0 is 2x wider", State.Stretch(), FVector2D(2.0, 1.0));
+	State.Ratio = 1.f;
+	TestEqual("Ratio 1 is 2x taller", State.Stretch(), FVector2D(1.0, 2.0));
 	return true;
 }
 
@@ -163,10 +158,15 @@ bool FSpriteSheetViewerUITest::RunTest(const FString& Parameters)
 		{
 			TSharedRef<SSpriteSheetViewer> Viewer = StaticCastSharedRef<SSpriteSheetViewer>(Window->GetContent());
 			TestTrue(TEXT("Playback advanced"), Viewer->GetState()->Frame > 0);
+			TestTrue(TEXT("Opens at actual size"), !Viewer->GetState()->bFit && Viewer->GetState()->Zoom == 1.f);
 			SaveScreenshot(Window.ToSharedRef(), TEXT("ViewerAnimation"));
 			Viewer->SetPlaying(false);
 			Viewer->GetState()->SetFrame(7);
 			Viewer->GetState()->bSheetView = true;
+			Viewer->GetState()->bFit = true;
+			Viewer->GetState()->Ratio = 0.25f;
+			Viewer->GetState()->bSolidBg = true;
+			Viewer->GetState()->BgColor = FLinearColor(0.1f, 0.3f, 0.6f);
 		}
 		return true;
 	}));

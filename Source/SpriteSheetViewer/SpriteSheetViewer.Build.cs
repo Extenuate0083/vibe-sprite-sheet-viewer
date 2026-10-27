@@ -8,6 +8,7 @@ public class SpriteSheetViewer : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"AppFramework",
 			"Core",
 			"CoreUObject",
 			"Engine",
